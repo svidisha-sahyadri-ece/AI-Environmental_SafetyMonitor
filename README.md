@@ -226,74 +226,8 @@ Run the following commands on your Raspberry Pi terminal:
 ```bash
 sudo apt update
 sudo apt install python3-pip espeak -y
-
-# Install required Python libraries
+```
+## Install required Python libraries
+```bash
 pip3 install firebase-admin pandas joblib requests pillow adafruit-circuitpython-ssd1306
 ```
-<details>
-<summary>📄 <strong>Rasberry Pi Code</strong> (click to expand)</summary>
-```python
-import firebase_admin
-from firebase_admin import credentials, db
-import time
-import pandas as pd
-import joblib
-import requests
-from PIL import Image
-import os
-
-# Initialize Firebase
-cred = credentials.Certificate("path_to_your_serviceAccountKey.json")
-firebase_admin.initialize_app(cred, {
-    'databaseURL': 'https://your-database.firebaseio.com/'  # replace with your actual URL
-})
-
-# Load trained model
-model = joblib.load('model.pkl')
-
-def get_sensor_data():
-    ref = db.reference('sensor')
-    data = ref.get()
-    if data:
-        temp = float(data.get("temperature", 0))
-        hum = float(data.get("humidity", 0))
-        gas = float(data.get("gas", 0))
-        flame = float(data.get("flame", 0))
-        return [[temp, hum, gas, flame]]
-    return [[0, 0, 0, 0]]
-
-def trigger_alert():
-    # Voice alert
-    os.system('espeak "Danger detected! Please evacuate immediately."')
-
-    # SMS alert using CircuitDigest API
-    url = "https://www.fast2sms.com/dev/bulkV2"
-    headers = {
-        'authorization': 'YOUR_FAST2SMS_API_KEY',
-        'Content-Type': "application/x-www-form-urlencoded"
-    }
-    payload = f"message=Danger Detected! Evacuate Immediately&language=english&route=q&numbers=xxxxxxxxxx"
-    response = requests.request("POST", url, data=payload, headers=headers)
-    print("SMS Sent:", response.text)
-
-    # Save alert image if connected camera
-    # from picamera import PiCamera
-    # camera = PiCamera()
-    # camera.capture('alert_image.jpg')
-    # camera.close()
-
-print("Monitoring started...")
-
-while True:
-    features = get_sensor_data()
-    df = pd.DataFrame(features, columns=['temp', 'hum', 'gas', 'flame'])
-    prediction = model.predict(df)
-
-    if prediction[0] == 1:
-        print("⚠️ Danger Detected!")
-        trigger_alert()
-    else:
-        print("✅ Environment Safe.")
-
-    time.sleep(5)
-
