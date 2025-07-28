@@ -1,0 +1,173 @@
+import firebase_admin
+from firebase_admin import credentials, db
+import os
+import time
+import requests
+import json
+import datetime
+import joblib
+from collections import deque
+import pandas as pd
+
+# OLED display libraries
+import board
+import busio
+from adafruit_ssd1306 import SSD1306_I2C
+from PIL import Image, ImageDraw, ImageFont
+
+# ========== 🔐 Firebase Setup ==========
+try:
+    # Replace this path with your local serviceAccountKey.json
+    cred = credentials.Certificate('path/to/serviceAccountKey.json')
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': 'https://your-project-id.firebaseio.com'
+    })
+    print("[✅] Firebase initialized successfully.")
+except Exception as e:
+    print("[❌] Firebase initialization failed:", e)
+    exit(1)
+
+# ========== 🧠 Load AI Model ==========
+try:
+    model = joblib.load('fire_alert_model.pkl')  # Ensure this .pkl file is in the same directory
+    print("[✅] AI model loaded successfully.")
+except Exception as e:
+    print("[❌] Failed to load model:", e)
+    exit(1)
+
+# ========== 🔊 Voice Alert ==========
+def speak(msg):
+    print("🔊", msg)
+    try:
+        os.system(f'espeak \"{msg}\"')
+    except Exception as e:
+        print("[⚠] Voice output failed:", e)
+
+# ========== 📲 SMS Alert ==========
+def send_sms_alert(var1, var2):
+    API_KEY = "your_api_key_here"
+    TEMPLATE_ID = "your_template_id"
+    PHONE_NUMBER = "91XXXXXXXXXX"  # Replace with your mobile number
+
+    url = f"https://www.circuitdigest.cloud/send_sms?ID={TEMPLATE_ID}"
+    headers = {
+        "Authorization": API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "mobiles": PHONE_NUMBER,
+        "var1": var1,
+        "var2": var2
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        print("📩 SMS Response:", response.json())
+    except Exception as e:
+        print("[❌] SMS sending failed:", e)
+
+# ========== 🌐 Internet Check ==========
+def is_connected():
+    try:
+        requests.get("https://www.google.com", timeout=3)
+        return True
+    except:
+        return False
+
+# ========== 📡 Firebase Fetch ==========
+def fetch_firebase():
+    try:
+        ref = db.reference('/SensorData')
+        return ref.get()
+    except Exception as e:
+        print("[❌] Firebase read error:", e)
+        return None
+
+# ========== 📂 Log File Setup ==========
+log_file = "firebase_realtime_log.json"
+if not os.path.exists(log_file):
+    with open(log_file, 'w') as f:
+        json.dump([], f)
+
+# ========== 🧠 Moving Window ==========
+window = deque(maxlen=5)
+
+# ========== 📺 OLED Setup ==========
+i2c = busio.I2C(board.SCL, board.SDA)
+oled = SSD1306_I2C(128, 64, i2c)
+oled.fill(0)
+oled.show()
+image = Image.new("1", (oled.width, oled.height))
+draw = ImageDraw.Draw(image)
+font = ImageFont.load_default()
+
+# ========== 🔄 Data Processing ==========
+def process_new_data(data):
+    try:
+        features = [
+            int(data.get("flame", 0)),
+            float(data.get("gas", 0)),
+            float(data.get("humidity", 0)),
+            float(data.get("temperature", 0))
+        ]
+
+        window.append(features)
+
+        if len(window) == 5:
+            avg_features = [sum(col) / len(window) for col in zip(*window)]
+            input_df = pd.DataFrame([avg_features], columns=["flame", "gas", "humidity", "temperature"])
+            prediction = model.predict(input_df)[0]
+            label = "danger" if prediction == 1 else "safe"
+
+            # 🔊 Alert + SMS when danger
+            if label == "danger":
+                speak("Warning! Danger detected.")
+                send_sms_alert("Fire", "Danger detected")
+            else:
+                print("✅ Environment safe. (No voice or SMS alert)")
+
+            # OLED Display
+            draw.rectangle((0, 0, oled.width, oled.height), outline=0, fill=0)
+            draw.text((0, 0),    f"Flame: {avg_features[0]:.0f}", font=font, fill=255)
+            draw.text((0, 10),   f"Gas: {avg_features[1]:.0f}", font=font, fill=255)
+            draw.text((0, 20),   f"Temp: {avg_features[3]:.1f} C", font=font, fill=255)
+            draw.text((0, 30),   f"Humidity: {avg_features[2]:.1f}%", font=font, fill=255)
+            draw.text((0, 45),   f"Status: {label.upper()}", font=font, fill=255)
+            oled.image(image)
+            oled.show()
+
+            # 📝 Log Entry
+            log_entry = {
+                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "flame": round(avg_features[0], 2),
+                "gas": round(avg_features[1], 2),
+                "humidity": round(avg_features[2], 2),
+                "temperature": round(avg_features[3], 2),
+                "label": label
+            }
+
+            print("📝 Log Entry:", log_entry)
+
+            with open(log_file, 'r+') as f:
+                logs = json.load(f)
+                logs.append(log_entry)
+                f.seek(0)
+                json.dump(logs, f, indent=2)
+
+    except Exception as e:
+        print("[⚠] Error processing data:", e)
+
+# ========== 🔁 Main Loop ==========
+if __name__ == "__main__":
+    while True:
+        print("\n🌐 Checking Firebase for sensor data...")
+        if is_connected():
+            firebase_data = fetch_firebase()
+            if firebase_data:
+                print("✅ Firebase Data:", firebase_data)
+                process_new_data(firebase_data)
+            else:
+                print("⚠ No data found in Firebase.")
+        else:
+            print("❌ No internet connection. Skipping Firebase check.")
+        time.sleep(5)
