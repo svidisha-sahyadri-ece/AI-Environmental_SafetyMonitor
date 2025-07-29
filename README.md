@@ -1,4 +1,4 @@
-# Industrial Safety Monitoring System using ESP32, Raspberry Pi & Firebase
+# Environmental Safety Monitoring System using ESP32, Raspberry Pi & Firebase
 
 This project presents a real-time Industrial Safety Monitoring System that uses multiple sensors to detect hazardous environmental conditions. It utilizes an ESP32 microcontroller for sensor interfacing, Firebase for cloud storage, a Raspberry Pi for local ML-based decision-making, and alert systems like SMS, voice feedback, and visual indicators.
 
